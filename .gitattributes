@@ -1,0 +1,16 @@
+# Language statistics (GitHub Linguist)
+# https://github.com/github-linguist/linguist/blob/main/docs/overrides.md
+
+# Migration scratch: diffs and working notes, not source
+*.patch                   linguist-generated=true
+truth.md                  linguist-generated=true
+instructions.md           linguist-generated=true
+
+# Compiled WebAssembly build artifact
+docs/current-device.wasm  binary linguist-generated=true
+
+# Go toolchain runtime shim, vendored verbatim from the Go distribution
+docs/wasm_exec.js         linguist-vendored=true
+
+# Test fixture captured from the TypeScript implementation
+testdata/typescript_oracle.json  linguist-generated=true

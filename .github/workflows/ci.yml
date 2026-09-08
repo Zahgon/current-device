@@ -6,17 +6,110 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ["1.22", "1.23", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+
+      - name: Verify formatting
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "gofmt needed:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+
+  wasm:
+    name: wasm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-      - run: pnpm install
-      - run: pnpm run typecheck
-      - run: pnpm run test
-      - run: pnpm run build
+
+      - name: Vet (js/wasm)
+        run: GOOS=js GOARCH=wasm go vet ./cmd/wasm/
+
+      - name: Build browser bundle
+        run: make wasm
+
+      # go_js_wasm_exec shells out to node, so the wasm tests are real
+      # end-to-end runs of the syscall/js bindings.
+      - name: Test (js/wasm)
+        run: make test-wasm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-bundle
+          path: dist/
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  differential:
+    name: differential vs typescript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Replay the recorded TypeScript oracle
+        run: go test -run 'TestDifferentialAgainstTypeScript|TestOracle' -v ./...

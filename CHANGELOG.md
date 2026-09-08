@@ -1,69 +1,55 @@
 # Changelog
 
-## 2.1.0
+## 3.0.0
 
-### Minor Changes
+Complete port from TypeScript to Go. See [MIGRATION.md](MIGRATION.md).
 
-- [#390](https://github.com/matthewhudson/current-device/pull/390) [`4b860a1`](https://github.com/matthewhudson/current-device/commit/4b860a1ad5b159ed55967c25aefb77c1c7faa723) Thanks [@matthewhudson](https://github.com/matthewhudson)! - Add HarmonyOS device detection via `device.harmonyos()`. HarmonyOS devices now get the `harmonyos` CSS class on `<html>` instead of `android`. Closes #375.
-
-### Patch Changes
-
-- [#390](https://github.com/matthewhudson/current-device/pull/390) [`4b860a1`](https://github.com/matthewhudson/current-device/commit/4b860a1ad5b159ed55967c25aefb77c1c7faa723) Thanks [@matthewhudson](https://github.com/matthewhudson)! - Add real-world UA string test suite with 24 device fixtures covering iPhone, iPad, iPod, Android phones/tablets, macOS, Windows, Linux, Television, and edge cases. Fix `device.macos()` false positive on iOS devices (UA strings contain "Mac OS X").
-
-## 2.0.2
-
-### Patch Changes
-
-- [#388](https://github.com/matthewhudson/current-device/pull/388) [`5253319`](https://github.com/matthewhudson/current-device/commit/52533192b45da80c26dfb6e35b1b6fa6fed8babf) Thanks [@matthewhudson](https://github.com/matthewhudson)! - Remove Node.js >= 22 requirement for consumers (lowered to >= 16). Add CDN script tag usage docs to README.
-
-## 2.0.1
-
-### Patch Changes
-
-- [`f44779e`](https://github.com/matthewhudson/current-device/commit/f44779e3493ab64412eb434bae73459b8fa51fee) Thanks [@matthewhudson](https://github.com/matthewhudson)! - Add IIFE build output for browser `<script>` tag usage via CDN (unpkg, jsdelivr). Fixes #385 where the UMD build was removed in v2.0.0, breaking `<script src="https://unpkg.com/current-device">` imports.
-
-## 2.0.0
-
-### Major Changes
-
-- [`e78a749`](https://github.com/matthewhudson/current-device/commit/e78a74932146f172a1db264591dc72c4dae03744) Thanks [@matthewhudson](https://github.com/matthewhudson)! - Migrated source code from JavaScript to TypeScript with strict type checking. Minimum Node.js version is now 22. Build output moved from lib/, es/, umd/ to dist/. See CHANGELOG.md for full migration guide.
-
-## 1.0.0 (2026-02-24) - BREAKING
-
-### Changed
-
-- **BREAKING**: Migrated source code from JavaScript to TypeScript with strict type checking
-- **BREAKING**: Minimum Node.js version is now 22 (previously 10)
-- **BREAKING**: Package manager changed to pnpm (npm/yarn still work for consumers)
-- **BREAKING**: Build output moved from `lib/`, `es/`, `umd/` to `dist/` — consumers using deep imports into those directories must update their paths
-- Replaced `nwb` build toolchain with `tsup` (esbuild-based, faster builds)
-- Replaced Karma/Mocha test setup with Vitest + jsdom
-- Replaced Travis CI with GitHub Actions
-- Removed legacy `window.attachEvent` fallback (IE-only, not needed for modern browsers)
+The detection logic is unchanged — it was transcribed rather than
+reimplemented, and equivalence with the TypeScript v2.1.0 implementation is
+verified by 53 differential scenarios recorded from the original source. No
+device is detected differently, and no CSS class output differs.
 
 ### Added
 
-- Full TypeScript type definitions exported from source (no separate `.d.ts` file needed)
-- Exported types: `Device`, `DeviceType`, `DeviceOs`, `DeviceOrientation`, `OrientationChangeCallback`
-- Proper `package.json` `exports` field for dual CJS/ESM support
-- GitHub Actions CI workflow
+- `device` package: pure detection driven by an explicit `Env` snapshot, usable
+  server-side via `device.NewFromUserAgent(r.UserAgent())`.
+- `cmd/wasm`: `GOOS=js GOARCH=wasm` bindings reproducing every browser side
+  effect — `<html>` classes, the orientation listener and `window.device`.
+- `web/current-device.js`: promise-based loader replacing the IIFE bundle.
+- Typed values: `DeviceType`, `DeviceOS`, `DeviceOrientation` with named
+  constants, replacing the TypeScript string unions.
+- Differential test suite replaying recorded output from the original
+  `src/index.ts`.
 
-### Removed
+### Changed
 
-- `nwb` build dependency
-- `eslint` and `prettier` dev dependencies (TypeScript compiler handles code quality)
-- UMD build output (use ESM or CJS instead; for browser `<script>` tags, use a CDN that supports ESM)
-- Travis CI configuration
+- **Breaking (JavaScript consumers):** `window.device` is published when
+  `load()` resolves rather than synchronously at script-parse time. WebAssembly
+  cannot be instantiated synchronously.
+- **Breaking (JavaScript consumers):** distribution is a `.wasm` bundle plus
+  loader instead of CJS/ESM/IIFE builds from npm.
+- `type`, `os` and `orientation` are methods in Go (`d.Type()`, `d.OS()`,
+  `d.Orientation()`). They remain plain string properties on the
+  WebAssembly-exported object.
+- `HasClass` treats an uncompilable pattern as absent where JavaScript's
+  `RegExp` constructor would throw. Unreachable with the library's own class
+  names.
 
-### Migration Guide
+### Preserved
 
-**For npm/yarn consumers**: No changes needed to your import statements. The public API is identical:
+Every upstream quirk is reproduced deliberately, including the `ios` OS label
+shadowing `iphone`/`ipad`/`ipod`, televisions reporting `type: desktop`,
+`node-webkit` outranking `television` in the class cascade, the leading space
+from the first `addClass`, and the `unknown` orientation for a square viewport.
+Each is documented in MIGRATION.md §4 and locked by tests.
 
-```ts
-import device from "current-device";
-device.mobile(); // still works exactly the same
-```
+### Documentation
 
-**If you were importing from internal paths** (e.g., `current-device/lib/...` or `current-device/umd/...`), update to use the package entry point instead.
+- Corrected two errors carried in the upstream README's CSS class table: the
+  HarmonyOS and NW.js rows were missing, and MeeGo emits `meego mobile` rather
+  than `meego`. Behaviour is unchanged; only the documentation was wrong.
 
-**If you were using the UMD build via `<script>` tag**, switch to an ESM-compatible CDN or bundler.
+---
+
+For the history of the TypeScript package (v1.x–v2.1.0), see the
+[original repository](https://github.com/matthewhudson/current-device/blob/main/CHANGELOG.md).

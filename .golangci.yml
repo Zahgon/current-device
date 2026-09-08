@@ -1,0 +1,48 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - revive
+    - gocritic
+    - ineffassign
+    - unused
+    - misspell
+    - unconvert
+    - bodyclose
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+        - name: package-comments
+        - name: var-naming
+          arguments:
+            - ["OS", "UA", "ID"]
+            - []
+
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters:
+          - gocritic
+          - errcheck
+
+      # DeviceType / DeviceOS / DeviceOrientation "stutter" as device.DeviceType.
+      # The names are kept deliberately: they are the 1:1 counterparts of the
+      # TypeScript package's exported DeviceType / DeviceOs / DeviceOrientation
+      # types, and that mapping is part of the documented migration contract
+      # (see MIGRATION.md, "Symbol mapping"). Renaming them to Type / OS /
+      # Orientation would be more idiomatic Go but would break the published
+      # correspondence with the original API.
+      - path: device\.go$
+        text: 'type name will be used as device\.Device(Type|OS|Orientation) by other packages'
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gofmt

@@ -1,384 +1,264 @@
-# [CURRENT-DEVICE](https://matthewhudson.github.io/current-device/)
+# current-device-go
 
-[![CI](https://github.com/matthewhudson/current-device/actions/workflows/ci.yml/badge.svg)](https://github.com/matthewhudson/current-device/actions/workflows/ci.yml)
-[![Bundle size](https://badgen.net/bundlephobia/minzip/current-device)](https://bundlephobia.com/result?p=current-device)
-[![NPM version](https://badge.fury.io/js/current-device.svg)](http://badge.fury.io/js/current-device)
-[![NPM downloads](https://img.shields.io/npm/dm/current-device.svg)](https://www.npmjs.com/package/current-device)
+[![CI](https://github.com/matthewhudson/current-device-go/actions/workflows/ci.yml/badge.svg)](https://github.com/matthewhudson/current-device-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/matthewhudson/current-device-go.svg)](https://pkg.go.dev/github.com/matthewhudson/current-device-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/matthewhudson/current-device-go)](https://goreportcard.com/report/github.com/matthewhudson/current-device-go)
 
-This module makes it easy to write conditional CSS _and/or_ JavaScript based on
-device operating system (iOS, Android, Blackberry, Windows, macOS, Firefox OS, MeeGo,
-AppleTV, etc), orientation (Portrait vs. Landscape), and type (Tablet vs.
-Mobile).
+Device detection for Go — operating system, form factor and orientation.
 
-[View the Demo &rarr;](https://matthewhudson.github.io/current-device/)
+A port of the npm package [current-device][npm], intended to be behaviourally
+identical to it. Detection logic is transcribed, not reimplemented: the same
+substring needles, the same evaluation order, the same edge cases. Equivalence is
+[verified against the original TypeScript](#equivalence-testing) rather than
+assumed.
 
-### EXAMPLES
+[npm]: https://www.npmjs.com/package/current-device
 
-This module inserts CSS classes into the `<html>` element.
+## Two layers
 
-#### iPhone
+The original is a browser module with import-time side effects. Go cannot express
+that directly, so the port is split:
 
-<img src="https://raw.githubusercontent.com/matthewhudson/current-device/main/docs/iphone.png" />
-
-#### Android Tablet
-
-<img src="https://raw.githubusercontent.com/matthewhudson/current-device/main/docs/android.png" />
-
-#### Blackberry Tablet
-
-<img src="https://raw.githubusercontent.com/matthewhudson/current-device/main/docs/blackberry.png" />
-
-### DEVICE SUPPORT
-
-- iOS: iPhone, iPod, iPad
-- macOS
-- Android: Phones & Tablets
-- Blackberry: Phones & Tablets
-- Windows: Phones, Tablets, Desktops
-- Firefox OS: Phones & Tablets
-
-### USAGE
-
-Just include the script. The script then updates the `<html>` section with the
-[appropriate classes](#conditional-css) based on the device's characteristics.
+| Layer | Location | Role |
+| --- | --- | --- |
+| Core | this package | Pure detection. No globals, no `init`, no I/O. Runs anywhere, including on a server. |
+| Browser | `cmd/wasm` | `GOOS=js GOARCH=wasm` bindings. Reads real browser globals, stamps `<html>` classes, listens for orientation changes, publishes `window.device`. |
 
 ## Installation
 
 ```sh
-npm install current-device
+go get github.com/matthewhudson/current-device-go
 ```
 
-And then import it:
+Requires Go 1.22 or newer. The core package has no dependencies outside the
+standard library.
 
-```ts
-// ES modules (recommended)
-import device from "current-device";
+## Usage
 
-// CommonJS
-const device = require("current-device").default;
+### Server-side
+
+```go
+import device "github.com/matthewhudson/current-device-go"
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	d := device.NewFromUserAgent(r.UserAgent())
+
+	if d.Mobile() {
+		// ...
+	}
+
+	fmt.Println(d.OS())   // "ios", "android", "macos", ...
+	fmt.Println(d.Type()) // "mobile", "tablet", "desktop"
+}
 ```
 
-### CDN / Script Tag
+A user agent alone cannot reveal orientation, so `d.Orientation()` reports
+`"unknown"` unless you supply viewport information.
 
-You can also include current-device directly via a `<script>` tag using a CDN:
+### With a full environment
+
+`NewFromUserAgent` is shorthand for `New` with everything else zeroed. Supply an
+[`Env`](https://pkg.go.dev/github.com/matthewhudson/current-device-go#Env) to
+reproduce the full browser signal set — including the `MacIntel` +
+`MaxTouchPoints` check that distinguishes an iPad in desktop mode from a Mac:
+
+```go
+d := device.New(device.Env{
+	UserAgent:      ua,
+	Platform:       "MacIntel",
+	MaxTouchPoints: 5,
+	InnerWidth:     834,
+	InnerHeight:    1194,
+})
+
+d.IPad()          // true
+d.Orientation()   // "portrait"
+```
+
+### Browser (WebAssembly)
+
+```sh
+make wasm   # -> dist/current-device.wasm, wasm_exec.js, current-device.js
+```
 
 ```html
-<script src="https://unpkg.com/current-device/dist/index.global.js"></script>
-<script>
-  console.log(device.type); // 'mobile', 'tablet', or 'desktop'
+<script src="wasm_exec.js"></script>
+<script type="module">
+  import { load } from './current-device.js'
+
+  const device = await load('./current-device.wasm')
+
+  if (device.mobile()) {
+    // ...
+  }
+
+  console.log(device.type, device.os, device.orientation)
 </script>
 ```
 
-### TypeScript
+The resolved `device` object has the same 30 members as the npm package, with the
+same camelCase names. The one unavoidable difference: WebAssembly cannot be
+instantiated synchronously, so `window.device` is published when the returned
+promise resolves rather than when the `<script>` tag finishes parsing.
 
-This package ships with built-in TypeScript types. You can import the types directly:
+Run `make serve` for a local demo at <http://localhost:8080> — WebAssembly cannot
+be fetched over `file://`.
 
-```ts
-import device from "current-device";
-import type { Device, DeviceType, DeviceOs, DeviceOrientation } from "current-device";
+## Conditional CSS
 
-const os: DeviceOs = device.os;
-const type: DeviceType = device.type;
-const isPhone: boolean = device.mobile();
+The WebAssembly layer stamps these classes onto `<html>`, exactly as the original
+does. The core package exposes the same cascade as a pure function,
+`d.ClassNames(current)`, so it can also be used for server-side rendering.
+
+### Device classes
+
+| Device | CSS classes |
+| --- | --- |
+| iPad | `ios ipad tablet` |
+| iPhone | `ios iphone mobile` |
+| iPod | `ios ipod mobile` |
+| Mac | `macos desktop` |
+| HarmonyOS phone | `harmonyos mobile` |
+| HarmonyOS tablet | `harmonyos tablet` |
+| Android phone | `android mobile` |
+| Android tablet | `android tablet` |
+| BlackBerry phone | `blackberry mobile` |
+| BlackBerry tablet | `blackberry tablet` |
+| Windows phone | `windows mobile` |
+| Windows tablet | `windows tablet` |
+| Windows desktop | `windows desktop` |
+| Firefox OS phone | `fxos mobile` |
+| Firefox OS tablet | `fxos tablet` |
+| MeeGo | `meego mobile` |
+| NW.js | `node-webkit` |
+| Television | `television` |
+| Desktop | `desktop` |
+
+`cordova` is appended independently, so it combines with any row above.
+
+> The upstream README omits the HarmonyOS and NW.js rows and lists MeeGo as
+> `meego` rather than `meego mobile`. The table here reflects what the code
+> actually does, which is what this port reproduces.
+
+### Orientation classes
+
+| Orientation | CSS class |
+| --- | --- |
+| Landscape | `landscape` |
+| Portrait | `portrait` |
+
+## API
+
+Thirty members, mapped 1:1 from the TypeScript interface. Predicates are grouped
+below; see the [reference docs][godoc] for details.
+
+[godoc]: https://pkg.go.dev/github.com/matthewhudson/current-device-go
+
+| TypeScript | Go |
+| --- | --- |
+| `device.macos()` | `d.MacOS()` |
+| `device.ios()` | `d.IOS()` |
+| `device.iphone()` | `d.IPhone()` |
+| `device.ipod()` | `d.IPod()` |
+| `device.ipad()` | `d.IPad()` |
+| `device.android()` | `d.Android()` |
+| `device.androidPhone()` | `d.AndroidPhone()` |
+| `device.androidTablet()` | `d.AndroidTablet()` |
+| `device.blackberry()` | `d.Blackberry()` |
+| `device.blackberryPhone()` | `d.BlackberryPhone()` |
+| `device.blackberryTablet()` | `d.BlackberryTablet()` |
+| `device.windows()` | `d.Windows()` |
+| `device.windowsPhone()` | `d.WindowsPhone()` |
+| `device.windowsTablet()` | `d.WindowsTablet()` |
+| `device.fxos()` | `d.FxOS()` |
+| `device.fxosPhone()` | `d.FxOSPhone()` |
+| `device.fxosTablet()` | `d.FxOSTablet()` |
+| `device.meego()` | `d.MeeGo()` |
+| `device.harmonyos()` | `d.HarmonyOS()` |
+| `device.television()` | `d.Television()` |
+| `device.cordova()` | `d.Cordova()` |
+| `device.nodeWebkit()` | `d.NodeWebkit()` |
+| `device.mobile()` | `d.Mobile()` |
+| `device.tablet()` | `d.Tablet()` |
+| `device.desktop()` | `d.Desktop()` |
+| `device.portrait()` | `d.Portrait()` |
+| `device.landscape()` | `d.Landscape()` |
+| `device.onChangeOrientation(cb)` | `d.OnChangeOrientation(cb)` |
+| `device.noConflict()` | `d.NoConflict()` |
+| `device.type` | `d.Type()` |
+| `device.os` | `d.OS()` |
+| `device.orientation` | `d.Orientation()` |
+
+Full details, including the rationale for each preserved quirk, are in
+[MIGRATION.md](MIGRATION.md).
+
+### Orientation callbacks
+
+```go
+d.OnChangeOrientation(func(o device.DeviceOrientation) {
+	log.Println(o) // "portrait" or "landscape"
+})
 ```
 
-### CONDITIONAL CSS
+Callbacks fire from `d.HandleOrientation(className)`, which the WebAssembly layer
+invokes on every `orientationchange` (or `resize`) event. As in the original, one
+`HandleOrientation` call happens at startup *before* user callbacks can be
+registered, so a callback only observes subsequent changes.
 
-The following tables map which CSS classes are added based on device and
-orientation.
+## Behaviour worth knowing
 
-#### Device CSS Class Names
+These are upstream behaviours, reproduced deliberately. Each is locked by a test.
 
-<table>
-	<tr>
-		<th>Device</th>
-		<th>CSS Classes</th>
-	</tr>
-	<tr>
-		<td>iPad</td>
-		<td>ios ipad tablet</td>
-	</tr>
-	<tr>
-		<td>iPhone</td>
-		<td>ios iphone mobile</td>
-	</tr>
-	<tr>
-		<td>iPod</td>
-		<td>ios ipod mobile</td>
-	</tr>
-	<tr>
-		<td>Mac</td>
-		<td>macos desktop</td>
-	</tr>
-	<tr>
-		<td>Android Phone</td>
-		<td>android mobile</td>
-	</tr>
-	<tr>
-		<td>Android Tablet</td>
-		<td>android tablet</td>
-	</tr>
-	<tr>
-		<td>BlackBerry Phone</td>
-		<td>blackberry mobile</td>
-	</tr>
-	<tr>
-		<td>BlackBerry Tablet</td>
-		<td>blackberry tablet</td>
-	</tr>
-	<tr>
-		<td>Windows Phone</td>
-		<td>windows mobile</td>
-	</tr>
-	<tr>
-		<td>Windows Tablet</td>
-		<td>windows tablet</td>
-	</tr>
-	<tr>
-		<td>Windows Desktop</td>
-		<td>windows desktop</td>
-	</tr>
-	<tr>
-		<td>Firefox OS Phone</td>
-		<td>fxos mobile</td>
-	</tr>
-	<tr>
-		<td>Firefox OS Tablet</td>
-		<td>fxos tablet</td>
-	</tr>
-	<tr>
-		<td>MeeGo</td>
-		<td>meego</td>
-	</tr>
-	<tr>
-		<td>Desktop</td>
-		<td>desktop</td>
-	</tr>
-	<tr>
-		<td>Television</td>
-		<td>television</td>
-	</tr>
-</table>
+- **iOS shadows the specific labels.** `"ios"` precedes `"iphone"`, `"ipad"` and
+  `"ipod"` in the OS resolution order, so those three values are unreachable —
+  every iOS device reports `OS() == "ios"`. The predicates still work.
+- **Televisions are desktops.** `Desktop()` is `!Tablet() && !Mobile()`, so a
+  smart TV reports `OS() == "television"` and `Type() == "desktop"`.
+- **NW.js outranks television** in the class cascade, and adds no OS or form
+  factor class.
+- **A square viewport is `"unknown"`.** The portrait probe is `height/width > 1`
+  and the landscape probe is `< 1`; when they are equal, both are false.
+- **`AddClass` trims first.** Appending to `""` yields `" desktop"`, with a
+  leading space. Consumers split on whitespace, so this is harmless — and
+  changing it would alter the emitted DOM.
+- **`iphone` beats `ipod`.** Real iPod touch user agents contain
+  `"CPU iPhone OS"`, so `IPhone()` is true and the cascade takes the iPhone
+  branch.
+- **`fxos` needles include punctuation.** They are `"(mobile"`, `"(tablet"` and
+  `" rv:"`. Firefox for Android emits `"; Mobile;"`, so it is correctly *not*
+  detected as Firefox OS.
 
-#### Orientation CSS Class Names
+## Equivalence testing
 
-<table>
-	<tr>
-		<th>Orientation</th>
-		<th>CSS Classes</th>
-	</tr>
-	<tr>
-		<td>Landscape</td>
-		<td>landscape</td>
-	</tr>
-	<tr>
-		<td>Portrait</td>
-		<td>portrait</td>
-	</tr>
-</table>
+Three layers of verification, all run in CI:
 
-### CONDITIONAL JAVASCRIPT
+1. **Differential tests.** `testdata/typescript_oracle.json` records 53 scenarios
+   produced by executing the original `src/index.ts` under Node — 23 user agent
+   fixtures carried over verbatim from the upstream suite, plus extra user
+   agents, orientation configurations and class cascade cases.
+   `TestDifferentialAgainstTypeScript` replays each and compares the resolved OS,
+   type, orientation, resulting className, orientation event name and all 27
+   predicates. Regenerate with `make oracle`.
+2. **Unit tests.** Every predicate, every cascade branch, every orientation code
+   path. The core package is at **100% statement coverage**; the WebAssembly
+   bindings are at 94.8% (the remainder is `main`, which parks forever).
+3. **Fuzzing.** `FuzzDetectionNeverPanics` asserts no input panics and that
+   resolved values are always declared constants.
 
-This module _also_ includes support for conditional JavaScript, allowing you to
-write checks on the following device characteristics:
+`TestOracleExercisesBothOutcomes` additionally asserts that every predicate is
+observed both true *and* false across the corpus, so the suite cannot be
+satisfied by a port that returns a constant.
 
-#### Device JavaScript Methods
-
-<table>
-	<tr>
-		<th>Device</th>
-		<th>JavaScript Method</th>
-	</tr>
-	<tr>
-		<td>Mobile</td>
-		<td>device.mobile()</td>
-	</tr>
-	<tr>
-		<td>Tablet</td>
-		<td>device.tablet()</td>
-	</tr>
-	<tr>
-		<td>Desktop</td>
-		<td>device.desktop()</td>
-	</tr>
-	<tr>
-		<td>iOS</td>
-		<td>device.ios()</td>
-	</tr>
-	<tr>
-		<td>iPad</td>
-		<td>device.ipad()</td>
-	</tr>
-	<tr>
-		<td>iPhone</td>
-		<td>device.iphone()</td>
-	</tr>
-	<tr>
-		<td>iPod</td>
-		<td>device.ipod()</td>
-	</tr>
-	<tr>
-		<td>Mac</td>
-		<td>device.macos()</td>
-	</tr>
-	<tr>
-		<td>Android</td>
-		<td>device.android()</td>
-	</tr>
-	<tr>
-		<td>Android Phone</td>
-		<td>device.androidPhone()</td>
-	</tr>
-	<tr>
-		<td>Android Tablet</td>
-		<td>device.androidTablet()</td>
-	</tr>
-	<tr>
-		<td>BlackBerry</td>
-		<td>device.blackberry()</td>
-	</tr>
-	<tr>
-		<td>BlackBerry Phone</td>
-		<td>device.blackberryPhone()</td>
-	</tr>
-	<tr>
-		<td>BlackBerry Tablet</td>
-		<td>device.blackberryTablet()</td>
-	</tr>
-	<tr>
-		<td>Windows</td>
-		<td>device.windows()</td>
-	</tr>
-	<tr>
-		<td>Windows Phone</td>
-		<td>device.windowsPhone()</td>
-	</tr>
-	<tr>
-		<td>Windows Tablet</td>
-		<td>device.windowsTablet()</td>
-	</tr>
-	<tr>
-		<td>Firefox OS</td>
-		<td>device.fxos()</td>
-	</tr>
-	<tr>
-		<td>Firefox OS Phone</td>
-		<td>device.fxosPhone()</td>
-	</tr>
-	<tr>
-		<td>Firefox OS Tablet</td>
-		<td>device.fxosTablet()</td>
-	</tr>
-	<tr>
-		<td>MeeGo</td>
-		<td>device.meego()</td>
-	</tr>
-	<tr>
-		<td>Television</td>
-		<td>device.television()</td>
-	</tr>
-</table>
-
-#### Orientation JavaScript Methods
-
-<table>
-	<tr>
-		<th>Orientation</th>
-		<th>JavaScript Method</th>
-	</tr>
-	<tr>
-		<td>Landscape</td>
-		<td>device.landscape()</td>
-	</tr>
-	<tr>
-		<td>Portrait</td>
-		<td>device.portrait()</td>
-	</tr>
-</table>
-
-#### Orientation JavaScript Callback
-
-```ts
-device.onChangeOrientation((newOrientation: "landscape" | "portrait") => {
-  console.log(`New orientation is ${newOrientation}`);
-});
+```sh
+make check      # fmt, vet, lint, tests, wasm tests, builds
+make test       # core tests with race detector and coverage
+make test-wasm  # syscall/js bindings, executed under Node
 ```
 
-### Utility Methods
+## Credits
 
-#### device.noConflict()
+Ported from [current-device][repo] by [Matthew Hudson][mh]. MIT licensed; the
+original copyright is preserved in [LICENSE](LICENSE).
 
-Run `current-device` in noConflict mode, returning the device variable to its
-previous owner. Returns a reference to the `device` object.
-
-```ts
-const currentDevice: Device = device.noConflict();
-```
-
-### Useful Properties
-
-Access these properties on the `device` object to get the first match on that
-attribute without looping through all of its getter methods.
-
-<table>
-	<tr>
-		<th>JS Property</th>
-		<th>Type</th>
-		<th>Returns</th>
-	</tr>
-	<tr>
-		<td>device.type</td>
-		<td>DeviceType</td>
-		<td>'mobile', 'tablet', 'desktop', or 'unknown'</td>
-	</tr>
-	<tr>
-		<td>device.orientation</td>
-		<td>DeviceOrientation</td>
-		<td>'landscape', 'portrait', or 'unknown'</td>
-	</tr>
-	<tr>
-		<td>device.os</td>
-		<td>DeviceOs</td>
-		<td>'ios', 'iphone', 'ipad', 'ipod', 'android', 'blackberry', 'windows', 'macos', 'fxos', 'meego', 'television', or 'unknown'</td>
-	</tr>
-</table>
-
-### BEST PRACTICES
-
-Environment detection has a high rate of misuse. Often times, folks will attempt
-to work around browser feature support problems by checking for the affected
-browser and doing something different in response. The preferred solution for
-those kinds of problems, of course, is to check for the feature, not the browser
-(ala [Modernizr](http://modernizr.com/)).
-
-However, that common misuse of device detection doesn't mean it should never be
-done. For example, `current-device` could be employed to change the interface of
-your web app such that it uses interaction patterns and UI elements common to
-the device it's being presented on. Android devices might get a slightly
-different treatment than Windows or iOS, for instance. Another valid use-case is
-guiding users to different app stores depending on the device they're using.
-
-In short, check for features when you need features, and check for the browser
-when you need the browser.
-
-## Contributors
-
-Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
-
-<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
-<!-- prettier-ignore-start -->
-<!-- markdownlint-disable -->
-<table>
-  <tr>
-    <td align="center"><a href="http://hudson.dev"><img src="https://avatars2.githubusercontent.com/u/320194?v=4" width="100px;" alt=""/><br /><sub><b>Matthew Hudson</b></sub></a><br /><a href="https://github.com/matthewhudson/current-device/commits?author=matthewhudson" title="Code">💻</a> <a href="#maintenance-matthewhudson" title="Maintenance">🚧</a></td>
-    <td align="center"><a href="http://rteran.com/"><img src="https://avatars3.githubusercontent.com/u/6477537?v=4" width="100px;" alt=""/><br /><sub><b>Rafael Terán</b></sub></a><br /><a href="https://github.com/matthewhudson/current-device/commits?author=RTeran" title="Code">💻</a></td>
-    <td align="center"><a href="https://github.com/winternet-studio"><img src="https://avatars1.githubusercontent.com/u/5200270?v=4" width="100px;" alt=""/><br /><sub><b>Allan</b></sub></a><br /><a href="https://github.com/matthewhudson/current-device/pulls?q=is%3Apr+reviewed-by%3Awinternet-studio" title="Reviewed Pull Requests">👀</a></td>
-    <td align="center"><a href="https://martin-wepner.de"><img src="https://avatars3.githubusercontent.com/u/12143284?v=4" width="100px;" alt=""/><br /><sub><b>martinwepner</b></sub></a><br /><a href="https://github.com/matthewhudson/current-device/commits?author=martinwepner" title="Code">💻</a></td>
-  </tr>
-</table>
-
-<!-- markdownlint-enable -->
-<!-- prettier-ignore-end -->
-<!-- ALL-CONTRIBUTORS-LIST:END -->
-
-This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome!
+[repo]: https://github.com/matthewhudson/current-device
+[mh]: https://github.com/matthewhudson

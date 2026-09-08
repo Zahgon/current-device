@@ -410,11 +410,11 @@
       <!-- Populated by JS: e.g. "macOS · Desktop · Landscape" -->
     </div>
     <div class="install-bar">
-      <code>npm install current-device</code>
+      <code>go get github.com/matthewhudson/current-device-go</code>
     </div>
     <nav class="hero-links">
-      <a href="https://github.com/matthewhudson/current-device">GitHub</a>
-      <a href="https://www.npmjs.com/package/current-device">npm</a>
+      <a href="https://github.com/matthewhudson/current-device-go">GitHub</a>
+      <a href="https://pkg.go.dev/github.com/matthewhudson/current-device-go">pkg.go.dev</a>
     </nav>
   </header>
 
@@ -471,21 +471,21 @@
 .landscape { /* ... */ }</code></pre>
       </div>
       <div class="column">
-        <h3>JavaScript API</h3>
-        <pre><code>import device from 'current-device'
+        <h3>Go API</h3>
+        <pre><code>d := device.NewFromUserAgent(ua)
 
-device.mobile()  // boolean
-device.desktop() // boolean
-device.os        // 'macos', 'ios', ...
-device.type      // 'mobile', 'tablet', ...</code></pre>
+d.Mobile()   // bool
+d.Desktop()  // bool
+d.OS()       // "macos", "ios", ...
+d.Type()     // "mobile", "tablet", ...</code></pre>
       </div>
       <div class="column">
         <h3>Orientation</h3>
-        <pre><code>device.onChangeOrientation(
-  (newOrientation) =&gt; {
-    console.log(newOrientation)
-    // 'portrait' or 'landscape'
-  }
+        <pre><code>d.OnChangeOrientation(
+  func(o device.DeviceOrientation) {
+    log.Println(o)
+    // "portrait" or "landscape"
+  },
 )</code></pre>
       </div>
     </div>
@@ -495,24 +495,31 @@ device.type      // 'mobile', 'tablet', ...</code></pre>
   <section class="quick-start">
     <h2>Quick Start</h2>
     <div class="tabs">
-      <button class="tab active" data-tab="esm">ESM (Recommended)</button>
-      <button class="tab" data-tab="script">Script Tag</button>
+      <button class="tab active" data-tab="go">Go (Recommended)</button>
+      <button class="tab" data-tab="script">Browser / WebAssembly</button>
     </div>
-    <div class="tab-content active" id="tab-esm">
-      <pre><code>npm install current-device</code></pre>
-      <pre><code>import device from 'current-device'
+    <div class="tab-content active" id="tab-go">
+      <pre><code>go get github.com/matthewhudson/current-device-go</code></pre>
+      <pre><code>import device "github.com/matthewhudson/current-device-go"
 
-if (device.mobile()) {
+d := device.NewFromUserAgent(r.UserAgent())
+
+if d.Mobile() {
   // Mobile-specific logic
 }
 
-console.log(device.type)        // 'mobile', 'tablet', or 'desktop'
-console.log(device.os)          // 'ios', 'android', 'macos', ...
-console.log(device.orientation) // 'portrait' or 'landscape'</code></pre>
+fmt.Println(d.Type())        // "mobile", "tablet", or "desktop"
+fmt.Println(d.OS())          // "ios", "android", "macos", ...
+fmt.Println(d.Orientation()) // "portrait" or "landscape"</code></pre>
     </div>
     <div class="tab-content" id="tab-script">
-      <pre><code>&lt;script src="https://unpkg.com/current-device"&gt;&lt;/script&gt;</code></pre>
-      <pre><code>&lt;script&gt;
+      <pre><code>make wasm  # emits dist/current-device.wasm + wasm_exec.js</code></pre>
+      <pre><code>&lt;script src="wasm_exec.js"&gt;&lt;/script&gt;
+&lt;script type="module"&gt;
+  import { load } from './current-device.js'
+
+  const device = await load('./current-device.wasm')
+
   if (device.mobile()) {
     // Mobile-specific logic
   }
@@ -528,50 +535,61 @@ console.log(device.orientation) // 'portrait' or 'landscape'</code></pre>
   <footer class="footer">
     <p>
       Created by <a href="https://github.com/matthewhudson">Matthew Hudson</a>
-      &middot; <a href="https://github.com/matthewhudson/current-device">GitHub</a>
-      &middot; <a href="https://www.npmjs.com/package/current-device">npm</a>
+      &middot; <a href="https://github.com/matthewhudson/current-device-go">GitHub</a>
+      &middot; <a href="https://pkg.go.dev/github.com/matthewhudson/current-device-go">pkg.go.dev</a>
       &middot; MIT License
     </p>
   </footer>
 
-  <script src="https://unpkg.com/current-device"></script>
-  <script>
-    (function () {
-      // Populate hero pill with detected values
-      var pill = document.getElementById('hero-pill');
-      var parts = [];
-      if (device.os !== 'unknown') {
-        parts.push(device.os);
-      }
-      if (device.type !== 'unknown') {
-        parts.push(device.type);
-      }
-      if (device.orientation !== 'unknown') {
-        parts.push(device.orientation);
-      }
-      pill.textContent = parts.join(' \u00B7 ');
+  <script src="wasm_exec.js"></script>
+  <script type="module">
+    import { load } from './current-device.js';
 
-      // Live orientation update
-      device.onChangeOrientation(function (newOrientation) {
-        var updated = [];
-        if (device.os !== 'unknown') updated.push(device.os);
-        if (device.type !== 'unknown') updated.push(device.type);
-        updated.push(newOrientation);
-        pill.textContent = updated.join(' \u00B7 ');
+    // Tab switching is independent of detection, so wire it up before the wasm
+    // module resolves rather than after.
+    var tabs = document.querySelectorAll('.tab');
+    var contents = document.querySelectorAll('.tab-content');
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        tabs.forEach(function (t) { t.classList.remove('active'); });
+        contents.forEach(function (c) { c.classList.remove('active'); });
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
       });
+    });
 
-      // Tab switching for Quick Start
-      var tabs = document.querySelectorAll('.tab');
-      var contents = document.querySelectorAll('.tab-content');
-      tabs.forEach(function (tab) {
-        tab.addEventListener('click', function () {
-          tabs.forEach(function (t) { t.classList.remove('active'); });
-          contents.forEach(function (c) { c.classList.remove('active'); });
-          tab.classList.add('active');
-          document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-        });
-      });
-    })();
+    var pill = document.getElementById('hero-pill');
+
+    var device;
+    try {
+      device = await load('./current-device.wasm');
+    } catch (error) {
+      pill.textContent = 'detection unavailable';
+      console.error(error);
+      throw error;
+    }
+
+    // Populate hero pill with detected values
+    var parts = [];
+    if (device.os !== 'unknown') {
+      parts.push(device.os);
+    }
+    if (device.type !== 'unknown') {
+      parts.push(device.type);
+    }
+    if (device.orientation !== 'unknown') {
+      parts.push(device.orientation);
+    }
+    pill.textContent = parts.join(' \u00B7 ');
+
+    // Live orientation update
+    device.onChangeOrientation(function (newOrientation) {
+      var updated = [];
+      if (device.os !== 'unknown') updated.push(device.os);
+      if (device.type !== 'unknown') updated.push(device.type);
+      updated.push(newOrientation);
+      pill.textContent = updated.join(' \u00B7 ');
+    });
   </script>
 </body>
 </html>
